@@ -39,7 +39,12 @@
 }
 :root:not([data-theme="light"]){ color-scheme: dark; }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+/* grid and flex children default to min-width:auto, which lets wide
+   content (charts, long numbers) push the page sideways. Pin them to 0. */
+.grid-primary>*,.grid-secondary>*,.summary>*,.rows>*,.nav>*,.panel-head>*,.row>*{min-width:0}
+.panel,.chart,.pane{max-width:100%;min-width:0}
+.panel{overflow:hidden}
 body{
   background:var(--bg);
   color:var(--ink);
@@ -75,7 +80,8 @@ body{overscroll-behavior-y:none}
 
 /* ---------- nav ---------- */
 .nav{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 0 26px}
-.mark{display:flex;flex-direction:column;gap:1px;min-width:0}
+.mark{display:flex;flex-direction:column;gap:1px;min-width:0;overflow:hidden}
+.mark b,.mark span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mark b{
   font-variation-settings:"wdth" 122,"wght" 800;
   font-size:clamp(1.3rem,4.4vw,1.75rem);letter-spacing:-.02em;line-height:1;
@@ -216,9 +222,10 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
   .panel--pace .chart{height:250px}
   .chart{height:170px}
 }
-.chart svg{display:block;width:100%;height:100%;overflow:visible}
+.chart svg{display:block;width:100%;height:100%;max-width:100%;overflow:hidden}
 .tip{
-  position:absolute;z-index:8;pointer-events:none;opacity:0;transform:translate(-50%,-118%);
+  position:absolute;z-index:8;left:0;top:0;max-width:92%;
+  pointer-events:none;opacity:0;transform:translate(-50%,-118%);
   background:rgba(14,17,13,.93);border:1px solid rgba(198,255,58,.3);border-radius:12px;
   padding:9px 12px;white-space:nowrap;transition:opacity .12s;
   box-shadow:0 14px 34px -12px rgba(0,0,0,.9);
@@ -251,7 +258,7 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
 .row .day{flex:none;width:74px}
 .row .day b{display:block;font-variation-settings:"wdth" 112,"wght" 700;font-size:1.28rem;line-height:1;letter-spacing:-.02em}
 .row .day span{display:block;margin-top:4px;font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.row .metrics{display:flex;flex-wrap:wrap;gap:4px 16px;flex:1;min-width:0}
+.row .metrics{display:flex;flex-wrap:wrap;gap:4px 16px;flex:1 1 0;min-width:0}
 .row .metrics i{font-style:normal;font-size:.88rem;color:var(--ink-2)}
 .row .metrics i:first-child{color:var(--lime);font-variation-settings:"wght" 650}
 .row .shot{
@@ -738,7 +745,8 @@ function drawChart(metricId, sessions){
   const W=host.clientWidth||600, H=host.clientHeight||160;
   while(svg.firstChild) svg.removeChild(svg.firstChild);
   svg.setAttribute("viewBox","0 0 "+W+" "+H);
-  svg.setAttribute("width",W); svg.setAttribute("height",H);
+  svg.setAttribute("preserveAspectRatio","none");
+  svg.removeAttribute("width"); svg.removeAttribute("height");
   const old=host.querySelector(".empty-chart"); if(old) old.remove();
   c.points=[]; clearHL(c);
 
@@ -857,7 +865,8 @@ function drawScatter(sessions){
   const W=host.clientWidth||600, H=host.clientHeight||240;
   while(svg.firstChild) svg.removeChild(svg.firstChild);
   svg.setAttribute("viewBox","0 0 "+W+" "+H);
-  svg.setAttribute("width",W); svg.setAttribute("height",H);
+  svg.setAttribute("preserveAspectRatio","none");
+  svg.removeAttribute("width"); svg.removeAttribute("height");
   const old=host.querySelector(".empty-chart"); if(old) old.remove();
   c.points=[]; c.guide=null; clearHL(c);
 
