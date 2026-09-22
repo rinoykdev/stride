@@ -40,6 +40,14 @@ nothing further is needed.
 Launched from the home screen or app list, it runs standalone — full screen, no browser
 chrome.
 
+## Adding an entry
+
+Tap **Add** and choose **Run or walk** or **Weight**.
+
+Weight asks for a date (today by default) and the number in kg — nothing else. One weight
+per day; logging a second for the same date offers to replace the first. It is plotted as
+the last graph on the Stats tab and never mixes into the running totals or pace averages.
+
 ## Adding a session
 
 Tap **Add**, paste something like:
