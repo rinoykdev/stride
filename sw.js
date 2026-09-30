@@ -1,5 +1,5 @@
 /* Stride service worker — app-shell cache, offline capable. */
-const VERSION = "stride-v5";
+const VERSION = "stride-v6";
 const SHELL = [
   "./",
   "./index.html",
@@ -57,6 +57,12 @@ self.addEventListener("fetch", (e) => {
         }).catch(() => hit)
       )
     );
+    return;
+  }
+
+  // API traffic always goes to the network, never the cache.
+  if (url.origin !== location.origin) {
+    e.respondWith(fetch(req));
     return;
   }
 

@@ -310,6 +310,27 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
 .page-title h2{margin:0;font-size:.74rem;letter-spacing:.2em;text-transform:uppercase;font-variation-settings:"wght" 700}
 .page-title span{display:block;margin-top:4px;font-size:.75rem;color:var(--ink-3)}
 
+.sync-panel{
+  margin-top:30px;padding:18px;border:1px solid var(--line);border-radius:var(--r-md);
+  background:var(--surface);display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;
+}
+.sync-state{display:flex;align-items:center;gap:12px;min-width:0}
+.sync-dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:none}
+.sync-dot.on{background:var(--lime);box-shadow:0 0 10px var(--lime)}
+.sync-dot.busy{background:var(--lime);animation:pulse 1s ease-in-out infinite}
+.sync-dot.bad{background:var(--danger);box-shadow:0 0 10px rgba(255,107,90,.6)}
+@keyframes pulse{50%{opacity:.25}}
+.sync-state b{display:block;font-size:.88rem;font-variation-settings:"wght" 650;color:var(--ink)}
+.sync-state span{display:block;margin-top:3px;font-size:.75rem;color:var(--ink-3)}
+.sync-actions{display:flex;gap:8px;flex-wrap:wrap}
+.sync-actions button{
+  background:none;border:1px solid var(--line);border-radius:10px;padding:9px 14px;
+  font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);
+  font-variation-settings:"wght" 600;font-family:inherit;
+}
+.sync-actions button.primary{background:var(--lime);border-color:var(--lime);color:#10160a}
+.sync-actions button:not(.primary):hover{border-color:rgba(198,255,58,.4);color:var(--ink)}
+
 .data-tools{
   margin-top:30px;padding-top:20px;border-top:1px solid var(--line-soft);
   display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
@@ -556,8 +577,18 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
       </button>
     </div>
     <div class="rows" id="rows"></div>
+    <div class="sync-panel" id="syncPanel">
+      <div class="sync-state">
+        <span class="sync-dot" id="syncDot"></span>
+        <div>
+          <b id="syncTitle">Sync off</b>
+          <span id="syncSub">Entries are stored on this device only.</span>
+        </div>
+      </div>
+      <div class="sync-actions" id="syncActions"></div>
+    </div>
     <div class="data-tools">
-      <span>Your sessions are stored on this device.</span>
+      <span>A backup file is worth keeping either way.</span>
       <div>
         <button id="expBtn">Export backup</button>
         <button id="impBtn">Import backup</button>
@@ -641,6 +672,137 @@ function localIO(key){
   };
 }
 
+/* ============================================================
+   Supabase sync — auth, queued writes, pull
+   Local storage stays the source of truth for reads, so the app
+   works offline; the server is a durable mirror that other
+   devices read from.
+   ============================================================ */
+const SB={
+  url:"https://lddzujuzaczuzctwtlus.supabase.co",
+  key:"sb_publishable_NJBiUdzcGXhP8Wn2iPRO6Q_uSs1Dx2I",
+  sessKey:"stride.auth.v1",
+  queueKey:"stride.queue.v1",
+  syncedKey:"stride.synced.v1",
+  session:null,
+  syncing:false,
+  lastError:null
+};
+
+function sbLoad(){ try{ SB.session=JSON.parse(localStorage.getItem(SB.sessKey)||"null"); }catch(e){ SB.session=null; } }
+function sbSave(s){
+  SB.session=s;
+  try{ s? localStorage.setItem(SB.sessKey,JSON.stringify(s)) : localStorage.removeItem(SB.sessKey); }catch(e){}
+}
+function sbSignedIn(){ return !!(SB.session && SB.session.access_token && SB.session.user_id); }
+function sbEmail(){ return SB.session? SB.session.email : null; }
+function sbStamp(v){ try{ v? localStorage.setItem(SB.syncedKey,v) : localStorage.removeItem(SB.syncedKey); }catch(e){} }
+function sbLastSync(){ try{ return localStorage.getItem(SB.syncedKey); }catch(e){ return null; } }
+
+function sbSessionFrom(json){
+  return {
+    access_token: json.access_token,
+    refresh_token: json.refresh_token,
+    expires_at: Date.now() + ((json.expires_in||3600)*1000) - 60000,
+    user_id: json.user && json.user.id,
+    email: json.user && json.user.email
+  };
+}
+
+async function sbAuthCall(path,body){
+  const res=await fetch(SB.url+"/auth/v1/"+path,{
+    method:"POST",
+    headers:{ "apikey":SB.key, "Content-Type":"application/json" },
+    body:JSON.stringify(body)
+  });
+  const json=await res.json().catch(()=>({}));
+  if(!res.ok){
+    const msg=json.msg||json.error_description||json.message||json.error||"Sign-in failed";
+    throw new Error(msg);
+  }
+  return json;
+}
+
+async function sbSignIn(email,password){
+  const json=await sbAuthCall("token?grant_type=password",{email:email,password:password});
+  if(!json.access_token) throw new Error("No session returned");
+  sbSave(sbSessionFrom(json));
+  return SB.session;
+}
+
+async function sbSignUp(email,password){
+  const json=await sbAuthCall("signup",{email:email,password:password});
+  if(json.access_token){ sbSave(sbSessionFrom(json)); return SB.session; }
+  return null;   // email confirmation is switched on for this project
+}
+
+async function sbRefresh(){
+  if(!SB.session||!SB.session.refresh_token) return false;
+  try{
+    const json=await sbAuthCall("token?grant_type=refresh_token",{refresh_token:SB.session.refresh_token});
+    if(!json.access_token) return false;
+    sbSave(sbSessionFrom(json));
+    return true;
+  }catch(e){ return false; }
+}
+
+async function sbRest(path,opts,retry){
+  if(!sbSignedIn()) throw new Error("Not signed in");
+  if(SB.session.expires_at && Date.now()>SB.session.expires_at){
+    if(!await sbRefresh()) throw new Error("Session expired");
+  }
+  opts=opts||{};
+  const headers=Object.assign({
+    "apikey":SB.key,
+    "Authorization":"Bearer "+SB.session.access_token,
+    "Content-Type":"application/json"
+  }, opts.headers||{});
+  const res=await fetch(SB.url+"/rest/v1/"+path, Object.assign({},opts,{headers:headers}));
+  if(res.status===401 && !retry){
+    if(await sbRefresh()) return sbRest(path,opts,true);
+    sbSave(null);
+    throw new Error("Session expired");
+  }
+  if(!res.ok){
+    const txt=await res.text().catch(()=>"");
+    throw new Error("Server rejected the request"+(txt?": "+txt.slice(0,120):""));
+  }
+  if(res.status===204) return null;
+  return res.json().catch(()=>null);
+}
+
+/* ---- offline write queue ---- */
+function qRead(){ try{ return JSON.parse(localStorage.getItem(SB.queueKey)||"[]"); }catch(e){ return []; } }
+function qWrite(list){ try{ localStorage.setItem(SB.queueKey,JSON.stringify(list)); }catch(e){} }
+function qPush(item){
+  const list=qRead();
+  // one pending write per row: the newest wins
+  const i=list.findIndex(x=>x.table===item.table && x.id===item.id);
+  if(i>=0) list[i]=item; else list.push(item);
+  qWrite(list);
+}
+function qCount(){ return qRead().length; }
+
+async function flushQueue(){
+  if(!sbSignedIn()) return;
+  let list=qRead();
+  while(list.length){
+    const item=list[0];
+    if(item.op==="delete"){
+      await sbRest(item.table+"?id=eq."+encodeURIComponent(item.id),{method:"DELETE"});
+    } else {
+      const row=Object.assign({},item.row,{user_id:SB.session.user_id});
+      await sbRest(item.table,{
+        method:"POST",
+        headers:{ "Prefer":"resolution=merge-duplicates,return=minimal" },
+        body:JSON.stringify([row])
+      });
+    }
+    list=qRead().filter(x=>!(x.table===item.table && x.id===item.id && x.op===item.op && x.at===item.at));
+    qWrite(list);
+  }
+}
+
 function makeStore(name,apply){
   return {
     name:name, apply:apply, io:localIO(LOCAL_KEYS[name]), mode:"local", listeners:[],
@@ -664,23 +826,96 @@ function makeStore(name,apply){
     },
     newId(){ return "s"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); },
     clean(o){ const out={}; for(const k in o){ if(k==="id") continue; const v=o[k]; if(v===undefined) continue; out[k]=v; } return out; },
+    replaceLocal(list){ this.io.write(list); this.emit(list); },
     async put(rec){
-      if(this.mode==="db"){ const id=rec.id||this.newId();
-        await DB.doc(this.name+"/"+id).set(this.clean(rec)); return id; }
       const list=this.io.read(), id=rec.id||this.newId();
       const i=list.findIndex(s=>s.id===id), row=Object.assign({},rec,{id});
       if(i>=0) list[i]=row; else list.push(row);
-      this.io.write(list); this.emit(list); return id;
+      this.io.write(list); this.emit(list);
+      if(typeof qPush==="function" && REMOTE[this.name]){
+        qPush({op:"upsert",table:REMOTE[this.name].table,id:id,row:REMOTE[this.name].toRow(row),at:Date.now()});
+        queueSync();
+      }
+      return id;
     },
     async remove(id){
-      if(this.mode==="db"){ await DB.doc(this.name+"/"+id).delete(); return; }
       const list=this.io.read().filter(s=>s.id!==id);
       this.io.write(list); this.emit(list);
+      if(typeof qPush==="function" && REMOTE[this.name]){
+        qPush({op:"delete",table:REMOTE[this.name].table,id:id,at:Date.now()});
+        queueSync();
+      }
     }
   };
 }
 const store  = makeStore("sessions", list=>{ state.sessions=list; });
 const wstore = makeStore("weights",  list=>{ state.weights=list; });
+
+/* ---- row mapping ---- */
+const REMOTE={
+  sessions:{
+    table:"sessions",
+    toRow:s=>({ id:s.id, date:s.date, distance_km:s.distanceKm, pace_sec:s.paceSec,
+      moving_sec:s.movingSec, elev_gain_m:s.elevGainM, max_elev_m:s.maxElevM,
+      steps:s.steps, created_at:s.createdAt||new Date().toISOString() }),
+    fromRow:r=>({ id:r.id, date:r.date, distanceKm:r.distance_km, paceSec:r.pace_sec,
+      movingSec:r.moving_sec, elevGainM:r.elev_gain_m, maxElevM:r.max_elev_m,
+      steps:r.steps, createdAt:r.created_at })
+  },
+  weights:{
+    table:"weights",
+    toRow:w=>({ id:w.id, date:w.date, weight_kg:w.weightKg, created_at:w.createdAt||new Date().toISOString() }),
+    fromRow:r=>({ id:r.id, date:r.date, weightKg:r.weight_kg, createdAt:r.created_at })
+  }
+};
+
+/* ---- sync ---- */
+async function pullAll(){
+  for(const st of [store,wstore]){
+    const map=REMOTE[st.name];
+    const rows=await sbRest(map.table+"?select=*&order=date.asc")||[];
+    st.replaceLocal(rows.map(map.fromRow));
+  }
+}
+
+async function pushAllLocal(){
+  for(const st of [store,wstore]){
+    const map=REMOTE[st.name];
+    const list=st.io.read();
+    if(!list.length) continue;
+    const rows=list.map(r=>Object.assign(map.toRow(r),{user_id:SB.session.user_id}));
+    for(let i=0;i<rows.length;i+=100){
+      await sbRest(map.table,{
+        method:"POST",
+        headers:{ "Prefer":"resolution=merge-duplicates,return=minimal" },
+        body:JSON.stringify(rows.slice(i,i+100))
+      });
+    }
+  }
+}
+
+async function syncNow(opts){
+  if(!sbSignedIn() || SB.syncing) return;
+  SB.syncing=true; SB.lastError=null; renderSync();
+  try{
+    if(opts && opts.migrate) await pushAllLocal();
+    await flushQueue();
+    await pullAll();
+    sbStamp(new Date().toISOString());
+  }catch(e){
+    SB.lastError=(e&&e.message)||"Sync failed";
+  }
+  SB.syncing=false;
+  renderSync();
+}
+
+let syncSoon=null;
+function queueSync(){
+  if(!sbSignedIn()) return;
+  clearTimeout(syncSoon);
+  syncSoon=setTimeout(()=>syncNow(),1200);
+}
+
 
 /* ============================================================
    state
@@ -1723,6 +1958,111 @@ $("#impFile").addEventListener("change",async ()=>{
 });
 
 /* ============================================================
+   sync UI
+   ============================================================ */
+function relTime(iso){
+  if(!iso) return "never";
+  const s=Math.round((Date.now()-new Date(iso).getTime())/1000);
+  if(s<60) return "just now";
+  if(s<3600) return Math.floor(s/60)+" min ago";
+  if(s<86400) return Math.floor(s/3600)+"h ago";
+  return Math.floor(s/86400)+"d ago";
+}
+
+function renderSync(){
+  const dot=$("#syncDot"), title=$("#syncTitle"), sub=$("#syncSub"), acts=$("#syncActions");
+  if(!dot) return;
+  acts.innerHTML="";
+  const btn=(label,cls,fn)=>{ const b=el("button",cls,label); b.addEventListener("click",fn); acts.appendChild(b); return b; };
+
+  if(!sbSignedIn()){
+    dot.className="sync-dot";
+    title.textContent="Sync off";
+    sub.textContent="Entries are stored on this device only.";
+    btn("Sign in","primary",openAuth);
+    return;
+  }
+  const pending=qCount();
+  if(SB.syncing){
+    dot.className="sync-dot busy";
+    title.textContent="Syncing…";
+    sub.textContent=sbEmail()||"";
+  } else if(SB.lastError){
+    dot.className="sync-dot bad";
+    title.textContent="Sync problem";
+    sub.textContent=SB.lastError;
+  } else if(pending){
+    dot.className="sync-dot";
+    title.textContent=pending+" change"+(pending===1?"":"s")+" waiting";
+    sub.textContent=navigator.onLine? "Retrying…" : "Offline — will send when you reconnect.";
+  } else {
+    dot.className="sync-dot on";
+    title.textContent="Synced";
+    sub.textContent=(sbEmail()||"")+" · "+relTime(sbLastSync());
+  }
+  btn("Sync now",null,()=>syncNow());
+  btn("Sign out",null,()=>{
+    sbSave(null); sbStamp(null); renderSync(); toast("Signed out — data stays on this device");
+  });
+}
+
+function openAuth(){
+  openSheet((s,top)=>{
+    top.appendChild(el("h3",null,"Sync your data"));
+    top.appendChild(el("p","sub","Sign in to keep your entries on the server and read them on another device."));
+    const form=el("div","form");
+    const field=(id,label,type)=>{
+      const w=el("div","field wide");
+      const l=el("label",null,label); l.setAttribute("for",id); w.appendChild(l);
+      const inp=el("input"); inp.id=id; inp.type=type;
+      if(type==="email"){ inp.setAttribute("autocomplete","email"); inp.setAttribute("inputmode","email"); }
+      else inp.setAttribute("autocomplete","current-password");
+      w.appendChild(inp); form.appendChild(w); return inp;
+    };
+    const fMail=field("a-mail","Email","email");
+    const fPass=field("a-pass","Password","password");
+    s.appendChild(form);
+    const err=el("p","err"); err.style.display="none"; s.appendChild(err);
+    const note=el("p","pop-note");
+    note.style.cssText="text-align:left;margin:14px 2px 0;line-height:1.5";
+    note.textContent="Creating an account uploads everything already on this device, then keeps both in step.";
+    s.appendChild(note);
+
+    const acts=el("div","actions");
+    const create=el("button",null,"Create account");
+    const signin=el("button","primary","Sign in");
+    acts.appendChild(create); acts.appendChild(signin); s.appendChild(acts);
+
+    const run=async (fn,label,btnEl)=>{
+      const email=fMail.value.trim(), pass=fPass.value;
+      if(!email||!pass){ err.style.display="block"; err.textContent="Enter an email and a password."; return; }
+      if(pass.length<6){ err.style.display="block"; err.textContent="Password needs at least 6 characters."; return; }
+      err.style.display="none";
+      create.disabled=true; signin.disabled=true; btnEl.textContent=label;
+      try{
+        const session=await fn(email,pass);
+        if(!session){
+          err.style.display="block";
+          err.textContent="Check your email to confirm the account, then sign in.";
+          create.disabled=false; signin.disabled=false; create.textContent="Create account"; signin.textContent="Sign in";
+          return;
+        }
+        closeSheet();
+        toast("Signed in — syncing");
+        await syncNow({migrate:true});
+        toast(SB.lastError? "Signed in, but sync failed" : "Everything is in sync");
+      }catch(e){
+        err.style.display="block"; err.textContent=(e&&e.message)||"That didn't work.";
+        create.disabled=false; signin.disabled=false; create.textContent="Create account"; signin.textContent="Sign in";
+      }
+    };
+    signin.addEventListener("click",()=>run(sbSignIn,"Signing in…",signin));
+    create.addEventListener("click",()=>run(sbSignUp,"Creating…",create));
+    setTimeout(()=>fMail.focus(),60);
+  });
+}
+
+/* ============================================================
    boot
    ============================================================ */
 LINE_METRICS.concat(["scatter"]).forEach(k=>{ const host=$("#chart-"+k); if(host) buildChart(host,k); });
@@ -1755,6 +2095,12 @@ const ready=(async function init(){
      browser's localStorage, and pasted text is parsed on-device. */
   store.start();
   wstore.start();
+  sbLoad();
+  renderSync();
+  if(sbSignedIn()) syncNow();
+  window.addEventListener("online",()=>{ renderSync(); syncNow(); });
+  window.addEventListener("offline",renderSync);
+  setInterval(renderSync,60000);
 })();
 
 /* service worker */
