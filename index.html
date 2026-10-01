@@ -148,10 +148,10 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
   display:grid;gap:26px 0;grid-template-columns:1fr 1fr;
 }
 @media(min-width:900px){.summary{grid-template-columns:1.35fr 1fr 1fr 1fr;gap:0}}
-.stat{position:relative;padding-right:18px;display:flex;flex-direction:column}
-@media(min-width:900px){.stat + .stat{padding-left:30px;border-left:1px solid var(--line-soft)}}
+.stat{position:relative;padding:0 10px;display:flex;flex-direction:column;align-items:center;text-align:center}
+@media(min-width:900px){.stat + .stat{border-left:1px solid var(--line-soft)}}
 .stat .v{
-  display:flex;align-items:baseline;gap:7px;
+  display:flex;align-items:baseline;justify-content:center;gap:7px;
   font-variation-settings:"wdth" 118,"wght" 700;letter-spacing:-.035em;line-height:.92;
   font-size:clamp(2.1rem,6.4vw,3.5rem);
 }
@@ -161,7 +161,7 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
   font-variation-settings:"wdth" 100,"wght" 650;white-space:nowrap;
 }
 .delta.sm{font-size:.72rem;margin-left:7px}
-.stat .k{display:flex;align-items:baseline;flex-wrap:wrap}
+.stat .k{display:flex;align-items:baseline;flex-wrap:wrap;justify-content:center}
 .stat .k .delta{letter-spacing:.06em}
 .panel-head .now .delta{display:block;margin:5px 0 0;text-align:right}
 .delta.down{color:var(--lime)}
