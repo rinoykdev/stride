@@ -1,5 +1,5 @@
 /* Stride service worker — app-shell cache, offline capable. */
-const VERSION = "stride-v6";
+const VERSION = "stride-v10";
 const SHELL = [
   "./",
   "./index.html",

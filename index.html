@@ -156,6 +156,14 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
   font-size:clamp(2.1rem,6.4vw,3.5rem);
 }
 .stat:first-child .v{font-size:var(--fs-display);color:var(--lime)}
+.delta{
+  margin-left:8px;font-size:.78rem;letter-spacing:.01em;
+  font-variation-settings:"wdth" 100,"wght" 650;white-space:nowrap;
+}
+.delta.sm{font-size:.72rem;margin-left:7px}
+.delta.down{color:var(--lime)}
+.delta.up{color:var(--danger)}
+.delta.flat{color:var(--ink-3)}
 .stat .u{font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-variation-settings:"wdth" 100,"wght" 600}
 .stat .k{margin-top:11px;font-size:.66rem;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-3)}
 .range-tag{
@@ -1002,6 +1010,40 @@ function highlight(c,p){
   if(c.guide){ c.guide.setAttribute("opacity","1"); c.guide.setAttribute("x1",p.px); c.guide.setAttribute("x2",p.px); }
 }
 
+/* Monotone cubic interpolation (Fritsch-Carlson): a smooth curve that never
+   overshoots the data, so the line can't imply a value that was never recorded. */
+function curvePath(pts){
+  const n=pts.length;
+  if(!n) return "";
+  const f=v=>v.toFixed(1);
+  if(n===1) return "M"+f(pts[0].x)+" "+f(pts[0].y);
+  if(n===2) return "M"+f(pts[0].x)+" "+f(pts[0].y)+" L"+f(pts[1].x)+" "+f(pts[1].y);
+
+  const dx=[],dy=[],m=[];
+  for(let i=0;i<n-1;i++){
+    dx[i]=pts[i+1].x-pts[i].x;
+    dy[i]=pts[i+1].y-pts[i].y;
+    m[i]= dx[i]!==0 ? dy[i]/dx[i] : 0;
+  }
+  const t=new Array(n);
+  t[0]=m[0]; t[n-1]=m[n-2];
+  for(let i=1;i<n-1;i++){
+    if(m[i-1]*m[i]<=0) t[i]=0;
+    else{
+      const w1=2*dx[i]+dx[i-1], w2=dx[i]+2*dx[i-1];
+      t[i]=(w1+w2)/(w1/m[i-1]+w2/m[i]);
+    }
+  }
+  let d="M"+f(pts[0].x)+" "+f(pts[0].y);
+  for(let i=0;i<n-1;i++){
+    const h=dx[i]/3;
+    d+=" C"+f(pts[i].x+h)+" "+f(pts[i].y+t[i]*h)+
+       " "+f(pts[i+1].x-h)+" "+f(pts[i+1].y-t[i+1]*h)+
+       " "+f(pts[i+1].x)+" "+f(pts[i+1].y);
+  }
+  return d;
+}
+
 function drawChart(metricId, sessions){
   const c=charts[metricId]; if(!c) return;
   const m=METRICS[metricId];
@@ -1039,14 +1081,13 @@ function drawChart(metricId, sessions){
 
   // defs
   const defs=mk("defs",{});
-  const gid="g_"+metricId, fid="f_"+metricId;
-  const grad=mk("linearGradient",{id:gid,x1:"0",y1:"0",x2:"0",y2:"1"});
-  grad.appendChild(mk("stop",{offset:"0","stop-color":"#c6ff3a","stop-opacity":"0.20"}));
-  grad.appendChild(mk("stop",{offset:"1","stop-color":"#c6ff3a","stop-opacity":"0"}));
-  defs.appendChild(grad);
-  const filt=mk("filter",{id:fid,x:"-25%",y:"-60%",width:"150%",height:"260%"});
-  filt.appendChild(mk("feGaussianBlur",{stdDeviation:"5"}));
+  const fid="f_"+metricId;
+  const filt=mk("filter",{id:fid,x:"-30%",y:"-80%",width:"160%",height:"300%"});
+  filt.appendChild(mk("feGaussianBlur",{stdDeviation:"4"}));
   defs.appendChild(filt);
+  const filtWide=mk("filter",{id:fid+"_w",x:"-40%",y:"-120%",width:"180%",height:"400%"});
+  filtWide.appendChild(mk("feGaussianBlur",{stdDeviation:"11"}));
+  defs.appendChild(filtWide);
   svg.appendChild(defs);
 
   // grid + y ticks
@@ -1066,35 +1107,27 @@ function drawChart(metricId, sessions){
     tx.textContent=fmtDay(toISO(new Date(t))); svg.appendChild(tx);
   }
 
-  // segments — break where a day is missing
-  const segs=[]; let cur=[data[0]];
-  for(let i=1;i<data.length;i++){
-    const gap=Math.round((data[i].t-data[i-1].t)/DAY);
-    if(gap>1){ segs.push(cur); cur=[data[i]]; } else cur.push(data[i]);
-  }
-  segs.push(cur);
+  // one continuous curve through every recorded point
+  const segs=[data];
 
-  const pathOf=(arr)=> arr.map((d,i)=>(i?"L":"M")+X(d.t).toFixed(1)+" "+Y(d.v).toFixed(1)).join(" ");
+  const pathOf=(arr)=> curvePath(arr.map(d=>({x:X(d.t),y:Y(d.v)})));
 
-  // area under the whole series (continuous, low opacity)
-  const areaD=data.map((d,i)=>(i?"L":"M")+X(d.t).toFixed(1)+" "+Y(d.v).toFixed(1)).join(" ")
-    +" L "+X(data[data.length-1].t).toFixed(1)+" "+(PAD.t+ih)+" L "+X(data[0].t).toFixed(1)+" "+(PAD.t+ih)+" Z";
-  if(data.length>1) svg.appendChild(mk("path",{d:areaD,fill:"url(#"+gid+")",stroke:"none"}));
-
-  // faint connectors across gaps
-  for(let i=1;i<segs.length;i++){
-    const a=segs[i-1][segs[i-1].length-1], b=segs[i][0];
-    svg.appendChild(mk("line",{x1:X(a.t),y1:Y(a.v),x2:X(b.t),y2:Y(b.v),
-      stroke:"rgba(198,255,58,0.22)","stroke-width":"1.2","stroke-dasharray":"2 5","stroke-linecap":"round"}));
-  }
+  // thin stems drop from each recorded point to the baseline
+  const stems=mk("g",{});
+  data.forEach(d=>{
+    stems.appendChild(mk("line",{x1:X(d.t),x2:X(d.t),y1:Y(d.v),y2:PAD.t+ih,
+      stroke:"rgba(198,255,58,0.16)","stroke-width":"1"}));
+  });
+  svg.appendChild(stems);
 
   // glow + crisp line
   const lineGroup=mk("g",{});
   segs.forEach(seg=>{
     if(seg.length<2) return;
     const d=pathOf(seg);
-    lineGroup.appendChild(mk("path",{d:d,fill:"none",stroke:"#c6ff3a","stroke-width":"3",opacity:"0.32",filter:"url(#"+fid+")"}));
-    lineGroup.appendChild(mk("path",{d:d,fill:"none",stroke:"#c6ff3a","stroke-width":"1.6","stroke-linecap":"round","stroke-linejoin":"round"}));
+    lineGroup.appendChild(mk("path",{d:d,fill:"none",stroke:"#c6ff3a","stroke-width":"5",opacity:"0.22",filter:"url(#"+fid+"_w)"}));
+    lineGroup.appendChild(mk("path",{d:d,fill:"none",stroke:"#c6ff3a","stroke-width":"3",opacity:"0.40",filter:"url(#"+fid+")"}));
+    lineGroup.appendChild(mk("path",{d:d,fill:"none",stroke:"#d6ff6b","stroke-width":"1.9","stroke-linecap":"round","stroke-linejoin":"round"}));
   });
   svg.appendChild(lineGroup);
 
@@ -1103,15 +1136,16 @@ function drawChart(metricId, sessions){
   data.forEach(d=>{
     const px=X(d.t), py=Y(d.v);
     c.points.push({px,py,v:d.v,date:d.date,id:d.id,vtext:m.fmt(d.v),extra:m.sub? m.sub(d.s):null});
-    const r= data.length>45 ? 0 : (data.length>18 ? 1.6 : 2.6);
-    if(r) dots.appendChild(mk("circle",{cx:px,cy:py,r:r,fill:"#0a0c08",stroke:"#c6ff3a","stroke-width":"1.4"}));
+    const r= data.length>80 ? 1.6 : (data.length>30 ? 2.2 : 3.2);
+    dots.appendChild(mk("circle",{cx:px,cy:py,r:r*2.1,fill:"#c6ff3a",opacity:"0.18",filter:"url(#"+fid+")"}));
+    dots.appendChild(mk("circle",{cx:px,cy:py,r:r,fill:"#d9ff7a"}));
   });
   svg.appendChild(dots);
 
   // interaction layer
-  c.guide=mk("line",{y1:PAD.t-4,y2:PAD.t+ih+4,stroke:"rgba(198,255,58,0.3)","stroke-width":"1",opacity:"0"});
+  c.guide=mk("line",{y1:PAD.t-4,y2:PAD.t+ih+4,stroke:"rgba(198,255,58,0.45)","stroke-width":"1",opacity:"0"});
   svg.appendChild(c.guide);
-  c.marker=mk("circle",{r:5,fill:"#c6ff3a",stroke:"#0a0c08","stroke-width":"2",opacity:"0"});
+  c.marker=mk("circle",{r:6,fill:"#f2ffd4",stroke:"rgba(198,255,58,0.55)","stroke-width":"5",opacity:"0"});
   svg.appendChild(c.marker);
   svg.appendChild(mk("rect",{x:0,y:0,width:W,height:H,fill:"transparent"}));
 
@@ -1204,6 +1238,23 @@ function summarize(list){
   return {dist,moving,days,avgPace,longest,count:list.length};
 }
 
+function weightDeltaFor(id){
+  const list=state.weights;           // chronological
+  const i=list.findIndex(w=>w.id===id);
+  if(i<=0) return null;
+  const prev=list[i-1];
+  if(prev.weightKg==null || list[i].weightKg==null) return null;
+  return Math.round((list[i].weightKg-prev.weightKg)*10)/10;
+}
+function deltaEl(d,small){
+  if(d==null) return null;
+  const cls = d>0 ? "delta up" : (d<0 ? "delta down" : "delta flat");
+  const txt = d>0 ? "+"+d.toFixed(1) : (d<0 ? d.toFixed(1) : "0.0");
+  const n=el("span",cls+(small?" sm":""),txt);
+  n.title="Change from the previous weigh-in";
+  return n;
+}
+
 function renderSummary(list){
   const s=summarize(list);
   const wrap=$("#summary"); wrap.innerHTML="";
@@ -1216,7 +1267,9 @@ function renderSummary(list){
   wrap.appendChild(stat(s.dist>0? s.dist.toFixed(1):"0.0","km","Total distance"));
   const wl=visibleWeights();
   const lw=wl.length? wl[wl.length-1] : null;
-  wrap.appendChild(stat(lw? lw.weightKg.toFixed(1):"—", lw?"kg":"", "Latest weight"));
+  const wStat=stat(lw? lw.weightKg.toFixed(1):"—", lw?"kg":"", "Latest weight");
+  if(lw){ const dn=deltaEl(weightDeltaFor(lw.id)); if(dn) wStat.querySelector(".v").appendChild(dn); }
+  wrap.appendChild(wStat);
   wrap.appendChild(stat(s.moving>0? fmtBig(s.moving):"0m","","Moving time"));
   wrap.appendChild(stat(s.avgPace? fmtClock(s.avgPace):"—", s.avgPace?"/km":"","Average pace"));
 
@@ -1236,9 +1289,10 @@ function renderLatest(list){
   const sp= last&&last.distanceKm!=null&&last.movingSec? last.distanceKm/(last.movingSec/3600):null;
   set("speed", sp!=null? sp.toFixed(2)+" km/h":"—");
   set("scatter", String(list.filter(s=>s.distanceKm!=null&&s.paceSec!=null).length));
-  const wl=visibleWeights();
-  const lw=wl.length? wl[wl.length-1] : null;
-  set("weight", lw&&lw.weightKg!=null? lw.weightKg.toFixed(1)+" kg":"—");
+  const wl2=visibleWeights();
+  const lw2=wl2.length? wl2[wl2.length-1] : null;
+  set("weight", lw2&&lw2.weightKg!=null? lw2.weightKg.toFixed(1)+" kg":"—");
+  if(lw2){ const dn=deltaEl(weightDeltaFor(lw2.id),true); if(dn) $("#now-weight").appendChild(dn); }
 }
 
 function historyItems(){
@@ -1272,7 +1326,10 @@ function renderHistory(){
     row.appendChild(day);
     const mt=el("div","metrics");
     if(item.kind==="weight"){
-      mt.appendChild(el("i",null, s.weightKg!=null? s.weightKg.toFixed(1)+" kg":"— kg"));
+      const wi=el("i",null, s.weightKg!=null? s.weightKg.toFixed(1)+" kg":"— kg");
+      const dn=deltaEl(weightDeltaFor(item.id),true);
+      if(dn) wi.appendChild(dn);
+      mt.appendChild(wi);
       mt.appendChild(el("i","tag","Weight"));
     } else {
       mt.appendChild(el("i",null, s.distanceKm!=null? s.distanceKm.toFixed(2)+" km":"— km"));
