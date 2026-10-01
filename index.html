@@ -148,24 +148,27 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
   display:grid;gap:26px 0;grid-template-columns:1fr 1fr;
 }
 @media(min-width:900px){.summary{grid-template-columns:1.35fr 1fr 1fr 1fr;gap:0}}
-.stat{position:relative;padding-right:18px}
+.stat{position:relative;padding-right:18px;display:flex;flex-direction:column}
 @media(min-width:900px){.stat + .stat{padding-left:30px;border-left:1px solid var(--line-soft)}}
 .stat .v{
   display:flex;align-items:baseline;gap:7px;
   font-variation-settings:"wdth" 118,"wght" 700;letter-spacing:-.035em;line-height:.92;
   font-size:clamp(2.1rem,6.4vw,3.5rem);
 }
-.stat:first-child .v{font-size:var(--fs-display);color:var(--lime)}
+.stat:first-child .v{color:var(--lime)}
 .delta{
-  margin-left:8px;font-size:.78rem;letter-spacing:.01em;
+  margin-left:8px;font-size:.72rem;letter-spacing:.02em;
   font-variation-settings:"wdth" 100,"wght" 650;white-space:nowrap;
 }
 .delta.sm{font-size:.72rem;margin-left:7px}
+.stat .k{display:flex;align-items:baseline;flex-wrap:wrap}
+.stat .k .delta{letter-spacing:.06em}
+.panel-head .now .delta{display:block;margin:5px 0 0;text-align:right}
 .delta.down{color:var(--lime)}
 .delta.up{color:var(--danger)}
 .delta.flat{color:var(--ink-3)}
 .stat .u{font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-variation-settings:"wdth" 100,"wght" 600}
-.stat .k{margin-top:11px;font-size:.66rem;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-3)}
+.stat .k{margin-top:auto;padding-top:11px;font-size:.66rem;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-3)}
 .range-tag{
   display:inline-flex;align-items:center;gap:7px;margin-bottom:18px;
   font-size:.7rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
@@ -1268,7 +1271,7 @@ function renderSummary(list){
   const wl=visibleWeights();
   const lw=wl.length? wl[wl.length-1] : null;
   const wStat=stat(lw? lw.weightKg.toFixed(1):"—", lw?"kg":"", "Latest weight");
-  if(lw){ const dn=deltaEl(weightDeltaFor(lw.id)); if(dn) wStat.querySelector(".v").appendChild(dn); }
+  if(lw){ const dn=deltaEl(weightDeltaFor(lw.id)); if(dn) wStat.querySelector(".k").appendChild(dn); }
   wrap.appendChild(wStat);
   wrap.appendChild(stat(s.moving>0? fmtBig(s.moving):"0m","","Moving time"));
   wrap.appendChild(stat(s.avgPace? fmtClock(s.avgPace):"—", s.avgPace?"/km":"","Average pace"));
@@ -1292,7 +1295,10 @@ function renderLatest(list){
   const wl2=visibleWeights();
   const lw2=wl2.length? wl2[wl2.length-1] : null;
   set("weight", lw2&&lw2.weightKg!=null? lw2.weightKg.toFixed(1)+" kg":"—");
-  if(lw2){ const dn=deltaEl(weightDeltaFor(lw2.id),true); if(dn) $("#now-weight").appendChild(dn); }
+  const nowW=$("#now-weight");
+  const stale=nowW.parentNode.querySelector(".delta"); if(stale) stale.remove();
+  if(lw2){ const dn=deltaEl(weightDeltaFor(lw2.id),true);
+    if(dn) nowW.parentNode.insertBefore(dn, nowW.nextSibling); }
 }
 
 function historyItems(){
