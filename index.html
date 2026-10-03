@@ -196,7 +196,7 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
 .panel--scatter .chart{height:260px}
 .panel--weight .chart{height:200px}
 @media(min-width:1024px){.panel--scatter .chart{height:320px}.panel--weight .chart{height:240px}}
-.tip .x{font-size:.76rem;color:var(--ink-2);margin-top:3px}
+.tip .x{font-size:.68rem;color:var(--ink-2);margin-top:2px}
 
 /* ---------- panels ---------- */
 .grid-primary{display:grid;gap:16px;margin-bottom:16px}
@@ -238,13 +238,12 @@ input::-webkit-calendar-picker-indicator{filter:invert(.8) sepia(1) saturate(4) 
 .tip{
   position:absolute;z-index:8;left:0;top:0;max-width:92%;
   pointer-events:none;opacity:0;transform:translate(-50%,-118%);
-  background:rgba(14,17,13,.93);border:1px solid rgba(198,255,58,.3);border-radius:12px;
-  padding:9px 12px;white-space:nowrap;transition:opacity .12s;
+  background:rgba(14,17,13,.93);border:1px solid rgba(198,255,58,.3);border-radius:9px;
+  padding:5px 9px;white-space:nowrap;transition:opacity .2s ease;
   box-shadow:0 14px 34px -12px rgba(0,0,0,.9);
 }
 .tip.on{opacity:1}
-.tip .d{font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
-.tip .v{font-size:1.02rem;font-variation-settings:"wght" 700;color:var(--lime);margin-top:3px}
+.tip .v{font-size:.8rem;font-variation-settings:"wght" 650;color:var(--lime)}
 .axis-hint{
   position:absolute;top:8px;right:2px;font-size:.6rem;letter-spacing:.13em;
   text-transform:uppercase;color:var(--ink-3);
@@ -968,13 +967,13 @@ function buildChart(host, metricId){
   const svgNS="http://www.w3.org/2000/svg";
   const svg=document.createElementNS(svgNS,"svg");
   host.appendChild(svg);
-  const tip=el("div","tip"); tip.innerHTML='<div class="d"></div><div class="v"></div>';
+  const tip=el("div","tip"); tip.innerHTML='<div class="v"></div>';
   host.appendChild(tip);
-  const c={host,svg,tip,metricId,points:[],geom:null,drawn:false};
+  const c={host,svg,tip,metricId,points:[],pinned:false,drawn:false};
   charts[metricId]=c;
 
   const move=(ev)=>{
-    if(!c.geom||!c.points.length) return;
+    if(!c.points.length) return;
     const r=host.getBoundingClientRect();
     const x=ev.clientX-r.left;
     const y=ev.clientY-r.top;
@@ -987,19 +986,41 @@ function buildChart(host, metricId){
     if(!best) return;
     highlight(c,best);
   };
-  svg.addEventListener("pointermove",move);
-  svg.addEventListener("pointerdown",ev=>{ move(ev);
-    if(c.active){ state.selectedId=c.active.id; renderHistory(); scrollToSelected(); } });
-  svg.addEventListener("pointerleave",()=>clearHL(c));
+  svg.addEventListener("pointermove",ev=>{
+    if(ev.pointerType==="mouse" && !c.pinned) move(ev);
+  });
+  svg.addEventListener("pointerdown",ev=>{
+    const prev = (c.pinned && c.active) ? c.active.id : null;
+    unpinCharts(c);
+    c.pinned=false;
+    move(ev);
+    if(c.active && prev===c.active.id){ clearHL(c); return; }   // tap it again to dismiss
+    if(c.active){
+      c.pinned=true;                       // the value stays put after a tap
+      state.selectedId=c.active.id;
+      renderHistory();
+      if(historyOpen()) scrollToSelected();
+    }
+  });
+  svg.addEventListener("pointerleave",()=>{ if(!c.pinned) clearHL(c); });
   return c;
 }
 
-function clearHL(c){ c.tip.classList.remove("on"); c.active=null;
+function historyOpen(){
+  const pg=document.getElementById("histPage");
+  return !!(pg && pg.classList.contains("open"));
+}
+function unpinCharts(except){
+  Object.keys(charts).forEach(k=>{
+    const c=charts[k];
+    if(c && c!==except && c.pinned){ c.pinned=false; clearHL(c); }
+  });
+}
+function clearHL(c){ c.tip.classList.remove("on"); c.active=null; c.pinned=false;
   if(c.marker){ c.marker.setAttribute("opacity","0"); } if(c.guide){ c.guide.setAttribute("opacity","0"); } }
 
 function highlight(c,p){
   c.active=p;
-  c.tip.querySelector(".d").textContent=fmtFull(p.date);
   c.tip.querySelector(".v").textContent=p.vtext;
   let x=c.tip.querySelector(".x");
   if(p.extra){ if(!x){ x=el("div","x"); c.tip.appendChild(x); } x.textContent=p.extra; x.style.display="block"; }
@@ -1146,8 +1167,7 @@ function drawChart(metricId, sessions){
   svg.appendChild(dots);
 
   // interaction layer
-  c.guide=mk("line",{y1:PAD.t-4,y2:PAD.t+ih+4,stroke:"rgba(198,255,58,0.45)","stroke-width":"1",opacity:"0"});
-  svg.appendChild(c.guide);
+  c.guide=null;
   c.marker=mk("circle",{r:6,fill:"#f2ffd4",stroke:"rgba(198,255,58,0.55)","stroke-width":"5",opacity:"0"});
   svg.appendChild(c.marker);
   svg.appendChild(mk("rect",{x:0,y:0,width:W,height:H,fill:"transparent"}));
@@ -1946,6 +1966,10 @@ $("#applyRange").addEventListener("click",()=>{
   state.range={preset:"CUSTOM",from:f,to:t};
   scheduleRender(); closePop();
 });
+
+document.addEventListener("pointerdown",ev=>{
+  if(!ev.target.closest || !ev.target.closest(".chart")) unpinCharts(null);
+},true);
 
 $("#upBtn").addEventListener("click",openAdd);
 $("#histAdd").addEventListener("click",openAdd);
